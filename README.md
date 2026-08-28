@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # idea
 
 A tiny command-line tool for capturing ideas before you forget them, organized by topic, stored locally as JSON.
@@ -95,3 +96,6 @@ Ideas are saved as JSON in `~/.config/idea/ideas.json`. If the file doesn't exis
 
 PS: If you look through the code and are wondering:
 If the file was created by an older version of this tool (the format before ids existed), it's migrated to the current format automatically the first time you run any command, and the migrated file is written back to disk immediately.
+=======
+# idea
+>>>>>>> origin/main
