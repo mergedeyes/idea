@@ -23,6 +23,7 @@ This produces a binary at `target/release/idea`. Put it somewhere on your `PATH`
 ```sh
 sudo cp target/release/idea /usr/local/bin/idea
 ```
+### Alternatively you can download the idea binary from the latest release page.
 
 ## Usage
 
