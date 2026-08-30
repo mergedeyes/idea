@@ -38,6 +38,13 @@ If you skip the topic, it goes under the default topic `no topic`:
 idea "remember to defrost the freezer"
 ```
 
+You can also give a chain of topic names to file an idea under a sub-topic, walked/created the
+same way as `add-topic` (see Sub-topics below):
+
+```sh
+idea Programming Rust WebDev "look into async traits"
+```
+
 ### List everything
 
 ```sh
@@ -59,25 +66,70 @@ idea list
 idea search 1 "io_uring"      # only within topic id 1
 idea search 0 "io_uring"      # across all topics
 idea search "rust" "pin"      # topics whose name contains "rust", filtered by idea text
-idea search "rust"            # all ideas in topics whose name contains "rust"
+idea search "rust"            # topics AND ideas searched for "rust" at once
 ```
 
 The topic selector is a number (an exact topic id, or `0` for "every topic") or a case-insensitive substring match on the topic name. The idea filter, when given, is a case-insensitive substring match on the idea text.
+
+With a single search argument, it's matched against both topics and ideas at once: a topic whose name (or id) matches has all of its ideas listed, and any idea whose text matches is listed regardless of its topic.
+
+### Edit
+
+```sh
+idea edit 1      # rename topic id 1
+idea edit 1 2    # edit the text of idea id 2 in topic id 1
+```
+
+One id after `edit` renames a topic; two ids edit a specific idea's text. Either way, the
+current name/text opens pre-filled on the line, ready to edit: change what you want and press
+Enter to save, or clear the line (or press Ctrl-C/Ctrl-D) to abort without changing anything.
+Since topic ids are unique across the whole tree (see Sub-topics below), this works on a topic
+at any depth.
+
+### Sub-topics
+
+Topics can nest inside other topics:
+
+```sh
+idea add-topic Programming Rust WebDev
+```
+
+This walks the names left to right. A name that already exists (checked among the current
+level's own children) becomes the parent for the next name; a name that doesn't exist yet is
+created as a sub-topic of the previous one. So if `Programming` already exists but `Rust` and
+`WebDev` don't, this adds `Programming > Rust > WebDev` as a new chain of sub-topics under the
+existing `Programming` topic. Running it again with names that all already exist just walks
+down the chain without creating anything.
+
+`idea list` shows sub-topics indented under their parent. Every id (topic or idea) still
+behaves the way it does everywhere else in this tool: topic ids are unique across the entire
+tree, so `search`, `edit`, and `delete` all reach a sub-topic just by its id, no matter how
+deep it's nested.
+
+Adding an idea works the same way: `idea "<topic>" "<idea>"` still matches/creates a single
+top-level topic by name, exactly like before sub-topics existed - unless `<topic>` is a number,
+in which case it addresses an existing topic's id at any depth. Give more than one topic name
+before the idea text (`idea <T1> <T2> ... "<idea>"`) and it's walked/created as a chain just
+like `add-topic`, then the idea is filed under the last topic in the chain.
 
 ### Delete
 
 ```sh
 idea delete 2 1        # delete idea id 1 inside topic id 2
-idea delete 2          # delete topic id 2 entirely, including its ideas
+idea delete 2 4        # topic 2 has no idea id 4, so this deletes sub-topic id 4 instead
+idea delete 2          # delete topic id 2 entirely, including its ideas and any sub-topics
 ```
 
-Deleting a topic that still contains ideas asks for confirmation first (default: no):
+The two-id form tries the second id as an idea living directly in that topic first; if there's
+no such idea, it tries it as a sub-topic nested anywhere inside that topic instead. Either way,
+deleting a topic (directly, or found this way) that still contains ideas or sub-topics asks for
+confirmation first (default: no):
 
 ```
-Topic "Guitar" (id 2) still has 1 idea(s) in it. Delete it and all its ideas? [y/N]:
+Topic "Guitar" (id 2) still has 1 idea(s) in it (counting sub-topics). Delete it and everything inside? [y/N]:
 ```
 
-An empty topic deletes immediately without prompting.
+An empty topic (no ideas, no sub-topics) deletes immediately without prompting.
 
 ### Defrag
 
