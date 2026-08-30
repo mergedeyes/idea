@@ -6,7 +6,7 @@ A tiny command-line tool for capturing ideas before you forget them, organized b
 
 You're mid-task and a thought worth keeping shows up: a project idea, a thing to look up later, a line for a song. `idea` lets you get it down in one command, filed under a topic, without breaking your flow. Later you can list, search, or clean up what you've collected.
 
-Every topic and every idea has a permanent numeric id. Ids never shift when you add or remove things elsewhere in your list, so a delete you queue up based on `idea list` output stays valid even if you add new ideas in between.
+Every topic and every idea has a permanent numeric id, but that id is only unique among its own siblings - a topic's direct sub-topics number their own 1, 2, 3, ..., and each topic's own ideas number their own 1, 2, 3, ..., independently of every other topic (see Ids below). Ids never shift when you add or remove things elsewhere in your list, so a delete you queue up based on `idea list` output stays valid even if you add new ideas in between.
 
 ## Installation
 
@@ -46,6 +46,13 @@ same way as `add-topic` (see Sub-topics below):
 idea Programming Rust WebDev "look into async traits"
 ```
 
+If every topic argument is a number instead, it's treated as an existing topic's id chain (see
+Ids below), not a name:
+
+```sh
+idea 2 1 "look into async traits"     # files under whatever topic is at id chain "2 1"
+```
+
 ### List everything
 
 ```sh
@@ -61,10 +68,12 @@ idea list
  [1] practice barre chords
 ```
 
+A nested topic's header shows its full id chain, not just its own local id - see Ids below.
+
 ### Search
 
 ```sh
-idea search 1 "io_uring"      # only within topic id 1
+idea search 1 "io_uring"      # only within top-level topic id 1 (and its sub-topics)
 idea search 0 "io_uring"      # across all topics
 idea search "rust" "pin"      # topics whose name contains "rust", filtered by idea text
 idea search "rust"            # topics AND ideas searched for "rust" at once
@@ -74,18 +83,17 @@ The topic selector is a number (an exact topic id, or `0` for "every topic") or 
 
 With a single search argument, it's matched against both topics and ideas at once: a topic whose name (or id) matches has all of its ideas listed, and any idea whose text matches is listed regardless of its topic.
 
+Unlike `edit`/`delete`, a numeric search selector is a single id, not a chain - so it matches that id wherever it occurs in the tree. Since ids are only unique among their own siblings, that can match more than one topic if two of them (under different parents) happen to share the same local id; each match is printed with its own full id chain so they're easy to tell apart.
+
 ### Edit
 
 ```sh
-idea edit 1      # rename topic id 1
-idea edit 1 2    # edit the text of idea id 2 in topic id 1
+idea edit 1        # rename top-level topic id 1
+idea edit 1 2       # edit idea id 2 in topic 1, or (if no such idea) rename its direct sub-topic id 2
+idea edit 1 2 3     # one level deeper: id 3 inside topic 2, inside topic 1
 ```
 
-One id after `edit` renames a topic; two ids edit a specific idea's text. Either way, the
-current name/text opens pre-filled on the line, ready to edit: change what you want and press
-Enter to save, or clear the line (or press Ctrl-C/Ctrl-D) to abort without changing anything.
-Since topic ids are unique across the whole tree (see Sub-topics below), this works on a topic
-at any depth.
+One id renames a top-level topic. Two or more ids walk a chain of topic ids one level at a time down to the second-to-last one, then try the very last id as an idea living directly in it; if there's no such idea, it's tried as a direct sub-topic instead and renamed (see Ids below for how the chain works). Either way, the current name/text opens pre-filled on the line, ready to edit: change what you want and press Enter to save, or clear the line (or press Ctrl-C/Ctrl-D) to abort without changing anything.
 
 ### Sub-topics
 
@@ -102,29 +110,42 @@ created as a sub-topic of the previous one. So if `Programming` already exists b
 existing `Programming` topic. Running it again with names that all already exist just walks
 down the chain without creating anything.
 
-`idea list` shows sub-topics indented under their parent. Every id (topic or idea) still
-behaves the way it does everywhere else in this tool: topic ids are unique across the entire
-tree, so `search`, `edit`, and `delete` all reach a sub-topic just by its id, no matter how
-deep it's nested.
+`idea list` shows sub-topics indented under their parent, each labeled with its full id chain -
+see Ids below.
 
 Adding an idea works the same way: `idea "<topic>" "<idea>"` still matches/creates a single
-top-level topic by name, exactly like before sub-topics existed - unless `<topic>` is a number,
-in which case it addresses an existing topic's id at any depth. Give more than one topic name
-before the idea text (`idea <T1> <T2> ... "<idea>"`) and it's walked/created as a chain just
-like `add-topic`, then the idea is filed under the last topic in the chain.
+top-level topic by name, exactly like before sub-topics existed - unless every `<topic>` argument
+is a number, in which case it's treated as an existing topic's id chain (see Ids). Give more than
+one topic name before the idea text (`idea <T1> <T2> ... "<idea>"`) and it's walked/created as a
+chain just like `add-topic`, then the idea is filed under the last topic in the chain.
+
+### Ids
+
+A topic id is only unique among its own siblings - the same way an idea id is only unique within its own topic. The first sub-topic you create under any topic gets id 1, no matter how many topics or sub-topics already exist elsewhere in your list; the same is true one level further down, and so on. This keeps numbers small and meaningful (the 2nd sub-topic under "Work" is id 2, not some arbitrary number that also depends on everything else you've ever filed).
+
+Because of that, reaching anything below the top level means giving the whole chain of ids down to it, one per level:
+
+```sh
+idea edit 2 4       # the topic (or idea) numbered 4, directly inside top-level topic 2
+idea edit 2 4 6     # one level deeper: id 6, directly inside topic 4, which is inside topic 2
+```
+
+A single id on its own always means a top-level topic. `idea list` prints every topic's full id chain (e.g. `TOPIC 2 4: WebDev`), so you never have to count levels by hand - just read the chain straight off the listing and pass it to `edit`/`delete`.
+
+The *last* id in a chain is tried as an idea living directly in the topic reached by the ids before it; if there's no such idea, it's tried as a direct sub-topic instead. That's how `idea edit 2 4` can mean either "idea 4 in topic 2" or "rename sub-topic 4 of topic 2", and how `idea delete ...` picks between deleting an idea or an entire sub-topic. If a topic happens to have *both* an idea and a direct sub-topic with the same id, the idea wins - address the sub-topic afterward (or after `defrag`) once that collision is gone.
+
+`idea search`'s numeric selector doesn't take a chain (see Search above) - it's the one place a bare id can match more than one topic.
 
 ### Delete
 
 ```sh
 idea delete 2 1        # delete idea id 1 inside topic id 2
-idea delete 2 4        # topic 2 has no idea id 4, so this deletes sub-topic id 4 instead
+idea delete 2 4        # topic 2 has no idea id 4, so this deletes its direct sub-topic id 4 instead
 idea delete 2          # delete topic id 2 entirely, including its ideas and any sub-topics
+idea delete 2 4 6      # one level deeper: delete idea/sub-topic 6 inside topic 4, inside topic 2
 ```
 
-The two-id form tries the second id as an idea living directly in that topic first; if there's
-no such idea, it tries it as a sub-topic nested anywhere inside that topic instead. Either way,
-deleting a topic (directly, or found this way) that still contains ideas or sub-topics asks for
-confirmation first (default: no):
+Same chain rules as `edit` (see Ids above). Either way, deleting a topic (directly, or found this way) that still contains ideas or sub-topics asks for confirmation first (default: no):
 
 ```
 Topic "Guitar" (id 2) still has 1 idea(s) in it (counting sub-topics). Delete it and everything inside? [y/N]:
@@ -134,13 +155,13 @@ An empty topic (no ideas, no sub-topics) deletes immediately without prompting.
 
 ### Defrag
 
-Deleting things leaves gaps in the numbering (e.g. topic ids `1, 3, 4` after deleting topic `2`). This is intentional, ids are permanent, not positions, so nothing else shifts. If you'd rather have the ids compact again:
+Deleting things leaves gaps in the numbering (e.g. topic ids `1, 3, 4` after deleting topic `2` from among its siblings). This is intentional, ids are permanent, not positions, so nothing else shifts. If you'd rather have the ids compact again:
 
 ```sh
 idea defrag
 ```
 
-This renumbers all topics to `1, 2, 3, ...` and, within each topic, all its ideas to `1, 2, 3, ...`, preserving the existing relative order.
+This renumbers every topic's direct sub-topics back to `1, 2, 3, ...` and every topic's own ideas back to `1, 2, 3, ...`, independently at every level, preserving each level's existing relative order.
 
 ## Where data is stored
 

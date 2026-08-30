@@ -34,26 +34,34 @@ fn print_help() {
     println!("  idea <T1> <T2> ... \"<Idea>\"       Save under a chain of (sub-)topics, walked/created like add-topic");
     println!("  idea list                          List all topics and ideas, with their ids");
     println!("  idea search <topic> [idea]         Search topics/ideas (see below)");
-    println!("  idea edit <topic_id>                Rename a topic (opens the current name to edit)");
-    println!("  idea edit <topic_id> <idea_id>     Edit an idea's text (opens the current text to edit)");
+    println!("  idea edit <id> [<id> ...]          Rename a topic, or edit an idea's text (see Ids below)");
     println!("  idea add-topic <name> [<name> ...] Create/walk a chain of (sub-)topics, see below");
-    println!("  idea delete <topic_id>              Delete a topic (and everything nested in it)");
-    println!("  idea delete <topic_id> <id>        Delete an idea by id, or (if no such idea) a nested");
-    println!("                                      sub-topic by id, from inside that topic");
+    println!("  idea delete <id> [<id> ...]        Delete a topic or an idea (see Ids below)");
     println!("  idea defrag                        Renumber all ids to close gaps (1, 2, 3, ...), order preserved");
     println!();
     println!("Search forms:");
-    println!("  idea search 1 \"foo\"       Search for \"foo\" only within topic id 1 (and its sub-topics)");
+    println!("  idea search 1 \"foo\"       Search for \"foo\" only within top-level topic id 1 (and its sub-topics)");
     println!("  idea search 0 \"foo\"       Search for \"foo\" across all topics");
     println!("  idea search \"work\" \"foo\"  Search for \"foo\" within topics whose name contains \"work\"");
     println!("  idea search \"work\"        Search topics AND idea text for \"work\" at the same time");
     println!();
-    println!("Topic ids are unique across the whole tree, including sub-topics, so 'idea edit <id> ...',");
-    println!("'idea delete <id> ...' and 'idea search <id> ...' all work on a topic at any depth by its id.");
-    println!("'idea edit' opens the current name/text pre-filled on the line: edit it and press Enter to");
-    println!("save, or clear the line (or press Ctrl-C/Ctrl-D) to abort without changing anything.");
-    println!("If a single <topic> in 'idea \"<topic>\" \"<idea>\"' is a number, it's treated as an existing");
-    println!("topic's id (found at any depth); otherwise it's matched/created by name (see below).");
+    println!("Ids:");
+    println!("  A topic id is only unique among its own siblings - the same way an idea id is only unique");
+    println!("  within its own topic. The first sub-topic you create under any topic gets id 1, no matter");
+    println!("  how many topics exist elsewhere; the same is true one level further down, and so on.");
+    println!("  Reaching anything below the top level means giving the whole chain of ids down to it, one");
+    println!("  per level: 'idea edit 2 4' means \"the topic (or idea) numbered 4, directly inside top-level");
+    println!("  topic 2\"; 'idea edit 2 4 6' goes one level deeper (id 6 inside topic 4, inside topic 2). A");
+    println!("  single id on its own always means a top-level topic. 'idea list' prints every topic's full");
+    println!("  id chain, so you can read off exactly what to type instead of counting levels by hand.");
+    println!("  The last id in a chain is tried as an idea living directly in the topic reached by the ids");
+    println!("  before it; if there's no such idea, it's tried as a direct sub-topic instead. That's how");
+    println!("  'idea edit 2 4' can mean either \"idea 4 in topic 2\" or \"rename sub-topic 4 of topic 2\",");
+    println!("  and how 'idea delete ...' picks between deleting an idea or an entire sub-topic.");
+    println!("  'idea edit' opens the current name/text pre-filled on the line: edit it and press Enter to");
+    println!("  save, or clear the line (or press Ctrl-C/Ctrl-D) to abort without changing anything.");
+    println!("  If every <topic> in 'idea \"<topic>\" \"<idea>\"' is a number, it's treated as an existing");
+    println!("  topic's id chain; otherwise it's matched/created by name (see below).");
     println!();
     println!("Sub-topics:");
     println!("  idea add-topic Programming Rust WebDev");
@@ -66,8 +74,8 @@ fn print_help() {
     println!("      first just creates the chain, the second also files an idea under the last topic in it.");
     println!();
     println!("Ideas are saved as json in '~/.config/idea/ideas.json'.");
-    println!("Topic and idea ids are permanent: a new one gets (current highest id in its scope) + 1, and");
-    println!("existing ids never shift when something else is added or removed. Deleting leaves gaps in the");
+    println!("Ids are permanent: a new one gets (current highest id among its own siblings) + 1, and existing");
+    println!("ids never shift when something else is added or removed elsewhere. Deleting leaves gaps in the");
     println!("numbering; run 'idea defrag' to compact everything back to 1, 2, 3, ... (order is preserved).");
 }
 
@@ -147,57 +155,6 @@ fn next_id<T>(items: &[T], id_of: impl Fn(&T) -> u64) -> u64 {
     items.iter().map(id_of).max().unwrap_or(0) + 1
 }
 
-// Highest topic id anywhere in the tree (including sub-topics, at any depth).
-fn max_topic_id(topics: &[Topic]) -> u64 {
-    topics
-        .iter()
-        .map(|t| t.id.max(max_topic_id(&t.sub_topics)))
-        .max()
-        .unwrap_or(0)
-}
-
-fn next_topic_id(topics: &[Topic]) -> u64 {
-    max_topic_id(topics) + 1
-}
-
-// Finds a topic by id anywhere in the tree (a topic itself, or nested at any depth in its sub-topics).
-fn find_topic<'a>(topics: &'a [Topic], topic_id: u64) -> Option<&'a Topic> {
-    for topic in topics {
-        if topic.id == topic_id {
-            return Some(topic);
-        }
-        if let Some(found) = find_topic(&topic.sub_topics, topic_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-fn find_topic_mut<'a>(topics: &'a mut [Topic], topic_id: u64) -> Option<&'a mut Topic> {
-    for topic in topics.iter_mut() {
-        if topic.id == topic_id {
-            return Some(topic);
-        }
-        if let Some(found) = find_topic_mut(&mut topic.sub_topics, topic_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-// Removes and returns a topic by id from wherever it lives in the tree (top level or nested).
-fn remove_topic_by_id(topics: &mut Vec<Topic>, topic_id: u64) -> Option<Topic> {
-    if let Some(pos) = topics.iter().position(|t| t.id == topic_id) {
-        return Some(topics.remove(pos));
-    }
-    for topic in topics.iter_mut() {
-        if let Some(found) = remove_topic_by_id(&mut topic.sub_topics, topic_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 // Total idea count in a topic, including all ideas in every sub-topic beneath it.
 fn count_ideas_recursive(topic: &Topic) -> usize {
     topic.ideas.len() + topic.sub_topics.iter().map(count_ideas_recursive).sum::<usize>()
@@ -208,17 +165,110 @@ fn count_sub_topics_recursive(topic: &Topic) -> usize {
     topic.sub_topics.iter().map(|t| 1 + count_sub_topics_recursive(t)).sum()
 }
 
+fn id_path_string(path: &[u64]) -> String {
+    path.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(" ")
+}
+
+// Walks a chain of topic ids one level at a time: ids[0] must match a top-level topic (a
+// sibling among `store` itself, where ids are unique); each id after that must match one of the
+// *direct* sub-topics of the topic reached by the ids before it (again, unique only among those
+// siblings). Unlike a flat "search anywhere" lookup, this can never land on a topic at the wrong
+// depth, which matters now that the same id can occur more than once across different branches.
+fn resolve_path<'a>(store: &'a [Topic], ids: &[u64]) -> Result<&'a Topic, String> {
+    let (first, rest) = match ids.split_first() {
+        Some(parts) => parts,
+        None => return Err("Empty id path.".to_string()),
+    };
+    let topic = store
+        .iter()
+        .find(|t| t.id == *first)
+        .ok_or_else(|| format!("No top-level topic found with id {}.", first))?;
+    resolve_path_within(topic, rest)
+}
+
+fn resolve_path_within<'a>(topic: &'a Topic, ids: &[u64]) -> Result<&'a Topic, String> {
+    let (id, rest) = match ids.split_first() {
+        Some(parts) => parts,
+        None => return Ok(topic),
+    };
+    let child = topic.sub_topics.iter().find(|t| t.id == *id).ok_or_else(|| {
+        format!(
+            "Topic \"{}\" has no sub-topic with id {} ({} sub-topic(s)).",
+            topic.name,
+            id,
+            topic.sub_topics.len()
+        )
+    })?;
+    resolve_path_within(child, rest)
+}
+
+fn resolve_path_mut<'a>(store: &'a mut Store, ids: &[u64]) -> Result<&'a mut Topic, String> {
+    let (first, rest) = match ids.split_first() {
+        Some(parts) => parts,
+        None => return Err("Empty id path.".to_string()),
+    };
+    let topic = store
+        .iter_mut()
+        .find(|t| t.id == *first)
+        .ok_or_else(|| format!("No top-level topic found with id {}.", first))?;
+    resolve_path_within_mut(topic, rest)
+}
+
+fn resolve_path_within_mut<'a>(topic: &'a mut Topic, ids: &[u64]) -> Result<&'a mut Topic, String> {
+    let (id, rest) = match ids.split_first() {
+        Some(parts) => parts,
+        None => return Ok(topic),
+    };
+    // Find the position first (immutable borrow, ends here) rather than iter_mut().find(...),
+    // so the error branch can still read topic.name/sub_topics.len() without a borrow conflict.
+    let pos = match topic.sub_topics.iter().position(|t| t.id == *id) {
+        Some(p) => p,
+        None => {
+            return Err(format!(
+                "Topic \"{}\" has no sub-topic with id {} ({} sub-topic(s)).",
+                topic.name,
+                id,
+                topic.sub_topics.len()
+            ));
+        }
+    };
+    resolve_path_within_mut(&mut topic.sub_topics[pos], rest)
+}
+
+// Removes and returns the topic at `ids` (see `resolve_path`): taken directly out of the
+// top-level `store` vec if `ids` is a single id, or out of its parent's `sub_topics` otherwise.
+fn remove_topic_at_path(store: &mut Store, ids: &[u64]) -> Result<Topic, String> {
+    let (last, parent_path) = match ids.split_last() {
+        Some(parts) => parts,
+        None => return Err("Empty id path.".to_string()),
+    };
+    if parent_path.is_empty() {
+        let pos = store
+            .iter()
+            .position(|t| t.id == *last)
+            .ok_or_else(|| format!("No top-level topic found with id {}.", last))?;
+        return Ok(store.remove(pos));
+    }
+    let parent = resolve_path_mut(store, parent_path)?;
+    let pos = parent.sub_topics.iter().position(|t| t.id == *last).ok_or_else(|| {
+        format!(
+            "Topic \"{}\" has no sub-topic with id {} ({} sub-topic(s)).",
+            parent.name,
+            last,
+            parent.sub_topics.len()
+        )
+    })?;
+    Ok(parent.sub_topics.remove(pos))
+}
+
 // Walks a chain of topic names left to right, starting at `topics` (the top level, on the
 // first call). A name that already exists among the current level's own children becomes the
 // parent context for the next name; a name that doesn't exist yet is created as a new
-// sub-topic of the previous one in the chain (or at the top level, for the very first name).
-// Returns a mutable reference to the topic named by the *last* element of `names`.
-fn walk_topic_chain<'a>(
-    topics: &'a mut Vec<Topic>,
-    names: &[String],
-    next_id_counter: &mut u64,
-    depth: usize,
-) -> &'a mut Topic {
+// sub-topic of the previous one in the chain (or at the top level, for the very first name),
+// with the next free id among *that level's own siblings* - ids restart at 1 under every
+// parent, see the Ids section of the help text. Returns a mutable reference to the topic named
+// by the *last* element of `names`.
+fn walk_topic_chain<'a>(topics: &'a mut Vec<Topic>, names: &[String], depth: usize) -> &'a mut Topic {
     let name = &names[0];
     let pos = match topics.iter().position(|t| &t.name == name) {
         Some(p) => {
@@ -226,8 +276,7 @@ fn walk_topic_chain<'a>(
             p
         }
         None => {
-            let new_id = *next_id_counter;
-            *next_id_counter += 1;
+            let new_id = next_id(topics, |t| t.id);
             topics.push(Topic {
                 id: new_id,
                 name: name.clone(),
@@ -245,34 +294,35 @@ fn walk_topic_chain<'a>(
     if names.len() == 1 {
         &mut topics[pos]
     } else {
-        walk_topic_chain(&mut topics[pos].sub_topics, &names[1..], next_id_counter, depth + 1)
+        walk_topic_chain(&mut topics[pos].sub_topics, &names[1..], depth + 1)
     }
 }
 
 fn add_topic_chain(store: &mut Store, names: &[String]) {
-    let mut next_id_counter = next_topic_id(store);
-    walk_topic_chain(store, names, &mut next_id_counter, 0);
+    walk_topic_chain(store, names, 0);
 }
 
-// `topic_path` is one or more topic names forming a chain, e.g. ["Programming", "Rust"]. A
-// single-segment path that parses as a number addresses an existing topic anywhere in the tree
-// by id. Otherwise the path is walked/created exactly like `add-topic` (existing names are
-// reused, missing ones are created as sub-topics of the previous segment), and the idea is
-// added to the topic named by the last segment.
+// Parses every element of `strs` as a positive-integer id; `None` if any element isn't one.
+fn parse_all_ids(strs: &[String]) -> Option<Vec<u64>> {
+    strs.iter().map(|s| s.parse::<u64>().ok().filter(|&n| n > 0)).collect()
+}
+
+// `topic_path` is one or more topic names forming a chain, e.g. ["Programming", "Rust"], OR (if
+// every segment parses as a positive integer) a chain of topic ids: the first id addresses a
+// top-level topic, and each id after that a *direct* sub-topic of the one before (see the Ids
+// section of the help text). An id chain that doesn't resolve to an existing topic falls through
+// and is treated as literal topic name(s) instead, same as the historical single-id shorthand.
 fn add_idea(store: &mut Store, topic_path: &[String], idea_text: &str) {
-    if topic_path.len() == 1 {
-        if let Ok(topic_id) = topic_path[0].parse::<u64>() {
-            if let Some(topic) = find_topic_mut(store, topic_id) {
-                let new_idea_id = next_id(&topic.ideas, |i| i.id);
-                topic.ideas.push(Idea { id: new_idea_id, text: idea_text.to_string() });
-                return;
-            }
-            // No topic has that id (yet) - fall through and treat it as a literal topic name.
+    if let Some(ids) = parse_all_ids(topic_path) {
+        if let Ok(topic) = resolve_path_mut(store, &ids) {
+            let new_idea_id = next_id(&topic.ideas, |i| i.id);
+            topic.ideas.push(Idea { id: new_idea_id, text: idea_text.to_string() });
+            return;
         }
+        // No topic has that id chain (yet) - fall through and treat it as literal topic name(s).
     }
 
-    let mut next_id_counter = next_topic_id(store);
-    let topic = walk_topic_chain(store, topic_path, &mut next_id_counter, 0);
+    let topic = walk_topic_chain(store, topic_path, 0);
     let new_idea_id = next_id(&topic.ideas, |i| i.id);
     topic.ideas.push(Idea { id: new_idea_id, text: idea_text.to_string() });
 }
@@ -283,26 +333,35 @@ fn list_ideas(store: &Store) {
         print_help();
         return;
     }
+    let mut path = Vec::new();
     for topic in store {
-        print_topic(topic, 0);
+        print_topic(topic, 0, &mut path);
     }
 }
 
-fn print_topic(topic: &Topic, depth: usize) {
+// Prints a topic and everything under it, indented by depth. The header shows the topic's full
+// id chain (e.g. "2 4" for the 4th direct sub-topic of top-level topic 2) - exactly what to pass
+// to `edit`/`delete`/etc. to reach it - not just its own local id.
+fn print_topic(topic: &Topic, depth: usize, path: &mut Vec<u64>) {
     let indent = "  ".repeat(depth);
-    println!("{}=== TOPIC {}: {} ===", indent, topic.id, topic.name);
+    path.push(topic.id);
+    println!("{}=== TOPIC {}: {} ===", indent, id_path_string(path), topic.name);
     for idea in &topic.ideas {
         println!("{} [{}] {}", indent, idea.id, idea.text);
     }
     println!();
     for sub in &topic.sub_topics {
-        print_topic(sub, depth + 1);
+        print_topic(sub, depth + 1, path);
     }
+    path.pop();
 }
 
 // Decides whether a topic matches a search selector:
 // - "0"      -> matches every topic ("search across everything")
-// - a number -> matches the topic with that permanent id
+// - a number -> matches any topic with that local id (topic ids are only unique among their own
+//                siblings - see the Ids section of the help text - so this can match more than
+//                one topic if they happen to share an id under different parents; each match is
+//                printed with its own full id chain so they're easy to tell apart)
 // - anything else -> case-insensitive substring match against the topic name
 fn matches_topic_selector(selector: &str, topic: &Topic) -> bool {
     match selector.parse::<u64>() {
@@ -314,7 +373,8 @@ fn matches_topic_selector(selector: &str, topic: &Topic) -> bool {
 
 fn search_ideas(store: &Store, topic_selector: &str, idea_query: Option<&str>) {
     let mut found_any = false;
-    search_ideas_recursive(store, topic_selector, idea_query, false, 0, &mut found_any);
+    let mut path = Vec::new();
+    search_ideas_recursive(store, topic_selector, idea_query, false, 0, &mut path, &mut found_any);
     if !found_any {
         println!("No matching ideas found.");
     }
@@ -330,10 +390,12 @@ fn search_ideas_recursive(
     idea_query: Option<&str>,
     inherited_match: bool,
     depth: usize,
+    path: &mut Vec<u64>,
     found_any: &mut bool,
 ) {
     let indent = "  ".repeat(depth);
     for topic in topics {
+        path.push(topic.id);
         let topic_matches = inherited_match || matches_topic_selector(topic_selector, topic);
         let mut header_printed = false;
         if topic_matches {
@@ -344,7 +406,7 @@ fn search_ideas_recursive(
                 };
                 if idea_matches {
                     if !header_printed {
-                        println!("{}=== TOPIC {}: {} ===", indent, topic.id, topic.name);
+                        println!("{}=== TOPIC {}: {} ===", indent, id_path_string(path), topic.name);
                         header_printed = true;
                     }
                     println!("{} [{}] {}", indent, idea.id, idea.text);
@@ -355,7 +417,8 @@ fn search_ideas_recursive(
         if header_printed {
             println!();
         }
-        search_ideas_recursive(&topic.sub_topics, topic_selector, idea_query, topic_matches, depth + 1, found_any);
+        search_ideas_recursive(&topic.sub_topics, topic_selector, idea_query, topic_matches, depth + 1, path, found_any);
+        path.pop();
     }
 }
 
@@ -366,22 +429,31 @@ fn search_ideas_recursive(
 // into sub-topics so a nested topic can match independently too.
 fn search_all(store: &Store, query: &str) {
     let mut found_any = false;
-    search_all_recursive(store, query, false, 0, &mut found_any);
+    let mut path = Vec::new();
+    search_all_recursive(store, query, false, 0, &mut path, &mut found_any);
     if !found_any {
         println!("No matching ideas found.");
     }
 }
 
-fn search_all_recursive(topics: &[Topic], query: &str, inherited_match: bool, depth: usize, found_any: &mut bool) {
+fn search_all_recursive(
+    topics: &[Topic],
+    query: &str,
+    inherited_match: bool,
+    depth: usize,
+    path: &mut Vec<u64>,
+    found_any: &mut bool,
+) {
     let indent = "  ".repeat(depth);
     for topic in topics {
+        path.push(topic.id);
         let topic_matches = inherited_match || matches_topic_selector(query, topic);
         let mut header_printed = false;
         for idea in &topic.ideas {
             let idea_matches = topic_matches || idea.text.to_lowercase().contains(query.to_lowercase().as_str());
             if idea_matches {
                 if !header_printed {
-                    println!("{}=== TOPIC {}: {} ===", indent, topic.id, topic.name);
+                    println!("{}=== TOPIC {}: {} ===", indent, id_path_string(path), topic.name);
                     header_printed = true;
                 }
                 println!("{} [{}] {}", indent, idea.id, idea.text);
@@ -391,58 +463,40 @@ fn search_all_recursive(topics: &[Topic], query: &str, inherited_match: bool, de
         if header_printed {
             println!();
         }
-        search_all_recursive(&topic.sub_topics, query, topic_matches, depth + 1, found_any);
+        search_all_recursive(&topic.sub_topics, query, topic_matches, depth + 1, path, found_any);
+        path.pop();
     }
 }
 
-fn edit_topic(store: &mut Store, topic_id: u64, new_name: &str) -> Result<String, String> {
-    let topic = find_topic_mut(store, topic_id).ok_or_else(|| format!("No topic found with id {}.", topic_id))?;
+fn rename_topic(topic: &mut Topic, new_name: &str) -> String {
     let old_name = topic.name.clone();
     topic.name = new_name.to_string();
-    Ok(old_name)
+    old_name
 }
 
-fn edit_idea(store: &mut Store, topic_id: u64, idea_id: u64, new_text: &str) -> Result<(String, String), String> {
-    let topic = find_topic_mut(store, topic_id).ok_or_else(|| format!("No topic found with id {}.", topic_id))?;
+fn edit_idea_in(topic: &mut Topic, idea_id: u64, new_text: &str) -> Result<(String, String), String> {
     let topic_name = topic.name.clone();
     let idea_count = topic.ideas.len();
-    let idea = topic
-        .ideas
-        .iter_mut()
-        .find(|i| i.id == idea_id)
-        .ok_or_else(|| {
-            format!(
-                "No idea found with id {} in topic '{}' ({} idea(s)).",
-                idea_id,
-                topic_name,
-                idea_count
-            )
-        })?;
+    let idea = topic.ideas.iter_mut().find(|i| i.id == idea_id).ok_or_else(|| {
+        format!(
+            "No idea found with id {} in topic '{}' ({} idea(s)).",
+            idea_id, topic_name, idea_count
+        )
+    })?;
     let old_text = idea.text.clone();
     idea.text = new_text.to_string();
     Ok((topic_name, old_text))
 }
 
-fn delete_idea(store: &mut Store, topic_id: u64, idea_id: u64) -> Result<(String, String), String> {
-    let topic = find_topic_mut(store, topic_id).ok_or_else(|| format!("No topic found with id {}.", topic_id))?;
-    let pos = topic
-        .ideas
-        .iter()
-        .position(|i| i.id == idea_id)
-        .ok_or_else(|| {
-            format!(
-                "No idea found with id {} in topic '{}' ({} idea(s)).",
-                idea_id,
-                topic.name,
-                topic.ideas.len()
-            )
-        })?;
+fn delete_idea_from(topic: &mut Topic, idea_id: u64) -> Result<(String, String), String> {
+    let pos = topic.ideas.iter().position(|i| i.id == idea_id).ok_or_else(|| {
+        format!(
+            "No idea found with id {} in topic '{}' ({} idea(s)).",
+            idea_id, topic.name, topic.ideas.len()
+        )
+    })?;
     let removed = topic.ideas.remove(pos);
     Ok((topic.name.clone(), removed.text))
-}
-
-fn delete_topic(store: &mut Store, topic_id: u64) -> Result<Topic, String> {
-    remove_topic_by_id(store, topic_id).ok_or_else(|| format!("No topic found with id {}.", topic_id))
 }
 
 fn confirm(prompt: &str) -> bool {
@@ -455,25 +509,18 @@ fn confirm(prompt: &str) -> bool {
     matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-fn run_delete_topic(store: &mut Store, topic_id_str: &str) {
-    let topic_id: u64 = match topic_id_str.parse() {
-        Ok(n) if n > 0 => n,
-        _ => {
-            println!("Error: topic id must be a positive integer.");
-            exit(1);
-        }
+fn run_delete_topic_at(store: &mut Store, path: &[u64]) {
+    let (name, idea_count, sub_topic_count) = {
+        let topic = match resolve_path(store, path) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("Error: {}", e);
+                exit(1);
+            }
+        };
+        (topic.name.clone(), count_ideas_recursive(topic), count_sub_topics_recursive(topic))
     };
-
-    let topic = match find_topic(store, topic_id) {
-        Some(t) => t,
-        None => {
-            println!("Error: No topic found with id {}.", topic_id);
-            exit(1);
-        }
-    };
-
-    let idea_count = count_ideas_recursive(topic);
-    let sub_topic_count = count_sub_topics_recursive(topic);
+    let path_str = id_path_string(path);
 
     if idea_count > 0 || sub_topic_count > 0 {
         let mut parts = Vec::new();
@@ -485,8 +532,8 @@ fn run_delete_topic(store: &mut Store, topic_id_str: &str) {
         }
         let proceed = confirm(&format!(
             "Topic \"{}\" (id {}) still has {} in it (counting sub-topics). Delete it and everything inside?",
-            topic.name,
-            topic.id,
+            name,
+            path_str,
             parts.join(" and ")
         ));
         if !proceed {
@@ -495,13 +542,13 @@ fn run_delete_topic(store: &mut Store, topic_id_str: &str) {
         }
     }
 
-    match delete_topic(store, topic_id) {
+    match remove_topic_at_path(store, path) {
         Ok(removed) => {
             let idea_count = count_ideas_recursive(&removed);
             let sub_topic_count = count_sub_topics_recursive(&removed);
             println!(
                 "Deleted topic \"{}\" (id {}), {} idea(s) and {} sub-topic(s) inside it.",
-                removed.name, topic_id, idea_count, sub_topic_count
+                removed.name, path_str, idea_count, sub_topic_count
             );
         }
         Err(e) => {
@@ -511,53 +558,56 @@ fn run_delete_topic(store: &mut Store, topic_id_str: &str) {
     }
 }
 
-// `idea delete <topic_id> <second_id>` first tries `second_id` as an idea id living directly
-// in `topic_id`'s own ideas (the historical behavior). If there's no such idea, it tries
-// `second_id` as a topic id nested anywhere inside `topic_id`'s subtree instead, and if that
-// matches, deletes that whole sub-topic (with the same confirmation flow as a normal topic
-// delete). This lets a chain like `idea delete <parent> <child>` reach a sub-topic directly.
-fn run_delete(store: &mut Store, topic_id_str: &str, second_id_str: &str) {
-    let topic_id: u64 = match topic_id_str.parse() {
-        Ok(n) if n > 0 => n,
-        _ => {
-            println!("Error: topic id must be a positive integer.");
-            exit(1);
-        }
-    };
-    let second_id: u64 = match second_id_str.parse() {
-        Ok(n) if n > 0 => n,
-        _ => {
-            println!("Error: id must be a positive integer.");
-            exit(1);
-        }
-    };
-
-    if let Ok((topic, idea)) = delete_idea(store, topic_id, second_id) {
-        println!("Deleted idea [{}] \"{}\" from topic \"{}\".", second_id, idea, topic);
+// `idea delete <id> [<id> ...]`. A single id deletes a top-level topic. Two or more ids walk a
+// path of topic ids (see `resolve_path`) to the second-to-last topic, then try the last id as an
+// idea living directly in it first; if there's no such idea, try it as a direct sub-topic
+// instead and delete that whole sub-topic (with the usual confirmation).
+fn run_delete(store: &mut Store, ids: &[u64]) {
+    if ids.len() == 1 {
+        run_delete_topic_at(store, ids);
         return;
     }
 
-    let topic = match find_topic(store, topic_id) {
-        Some(t) => t,
-        None => {
-            println!("Error: No topic found with id {}.", topic_id);
+    let (parent_path, second_id) = ids.split_at(ids.len() - 1);
+    let second_id = second_id[0];
+
+    let deleted_idea = match resolve_path_mut(store, parent_path) {
+        Ok(topic) => delete_idea_from(topic, second_id).ok(),
+        Err(e) => {
+            println!("Error: {}", e);
             exit(1);
         }
     };
-    let is_nested_sub_topic = find_topic(&topic.sub_topics, second_id).is_some();
+    if let Some((topic_name, idea_text)) = deleted_idea {
+        println!("Deleted idea [{}] \"{}\" from topic \"{}\".", second_id, idea_text, topic_name);
+        return;
+    }
 
-    if !is_nested_sub_topic {
+    let (topic_name, idea_count, sub_topic_count, is_direct_sub_topic) = {
+        let topic = match resolve_path(store, parent_path) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("Error: {}", e);
+                exit(1);
+            }
+        };
+        (
+            topic.name.clone(),
+            topic.ideas.len(),
+            topic.sub_topics.len(),
+            topic.sub_topics.iter().any(|t| t.id == second_id),
+        )
+    };
+
+    if !is_direct_sub_topic {
         println!(
             "Error: No idea and no sub-topic found with id {} in topic '{}' ({} idea(s), {} sub-topic(s)).",
-            second_id,
-            topic.name,
-            topic.ideas.len(),
-            count_sub_topics_recursive(topic)
+            second_id, topic_name, idea_count, sub_topic_count
         );
         exit(1);
     }
 
-    run_delete_topic(store, second_id_str);
+    run_delete_topic_at(store, ids);
 }
 
 // Opens a line pre-filled with `current`, ready for the user to edit in place; Enter accepts
@@ -567,19 +617,11 @@ fn prompt_edit(prompt: &str, current: &str) -> Option<String> {
     editor.readline_with_initial(prompt, (current, "")).ok()
 }
 
-fn run_edit_topic(store: &mut Store, topic_id_str: &str) {
-    let topic_id: u64 = match topic_id_str.parse() {
-        Ok(n) if n > 0 => n,
-        _ => {
-            println!("Error: topic id must be a positive integer.");
-            exit(1);
-        }
-    };
-
-    let current_name = match find_topic(store, topic_id) {
-        Some(t) => t.name.clone(),
-        None => {
-            println!("Error: No topic found with id {}.", topic_id);
+fn prompt_and_rename_topic(store: &mut Store, path: &[u64]) {
+    let current_name = match resolve_path(store, path) {
+        Ok(t) => t.name.clone(),
+        Err(e) => {
+            println!("Error: {}", e);
             exit(1);
         }
     };
@@ -592,90 +634,113 @@ fn run_edit_topic(store: &mut Store, topic_id_str: &str) {
         }
     };
 
-    match edit_topic(store, topic_id, &new_name) {
-        Ok(old_name) => println!("Renamed topic \"{}\" (id {}) to \"{}\".", old_name, topic_id, new_name),
-        Err(e) => {
-            println!("Error: {}", e);
-            exit(1);
-        }
-    }
+    let topic = resolve_path_mut(store, path).expect("topic vanished mid-edit");
+    let old_name = rename_topic(topic, &new_name);
+    println!("Renamed topic \"{}\" (id {}) to \"{}\".", old_name, id_path_string(path), new_name);
 }
 
-fn run_edit(store: &mut Store, topic_id_str: &str, idea_id_str: &str) {
-    let topic_id: u64 = match topic_id_str.parse() {
-        Ok(n) if n > 0 => n,
-        _ => {
-            println!("Error: topic id must be a positive integer.");
-            exit(1);
-        }
-    };
-    let idea_id: u64 = match idea_id_str.parse() {
-        Ok(n) if n > 0 => n,
-        _ => {
-            println!("Error: idea id must be a positive integer.");
-            exit(1);
-        }
-    };
-
-    let topic = match find_topic(store, topic_id) {
-        Some(t) => t,
-        None => {
-            println!("Error: No topic found with id {}.", topic_id);
-            exit(1);
-        }
-    };
-    let current_text = match topic.ideas.iter().find(|i| i.id == idea_id) {
-        Some(i) => i.text.clone(),
-        None => {
-            println!(
-                "Error: No idea found with id {} in topic '{}' ({} idea(s)).",
-                idea_id,
-                topic.name,
-                topic.ideas.len()
-            );
-            exit(1);
-        }
-    };
-
-    let new_text = match prompt_edit("Idea: ", &current_text) {
-        Some(text) if !text.trim().is_empty() => text,
-        _ => {
-            println!("Aborted. Nothing was changed.");
-            exit(0);
-        }
-    };
-
-    match edit_idea(store, topic_id, idea_id, &new_text) {
-        Ok((topic, old_text)) => println!(
-            "Edited idea [{}] in topic \"{}\": \"{}\" -> \"{}\".",
-            idea_id, topic, old_text, new_text
-        ),
-        Err(e) => {
-            println!("Error: {}", e);
-            exit(1);
-        }
+// `idea edit <id> [<id> ...]`. A single id renames a top-level topic. Two or more ids walk a
+// path of topic ids (see `resolve_path`) to the second-to-last topic, then try the last id as an
+// idea living directly in it first; if there's no such idea, try it as a direct sub-topic
+// instead and rename that (same fallback `delete` uses to pick between an idea and a sub-topic).
+fn run_edit(store: &mut Store, ids: &[u64]) {
+    if ids.len() == 1 {
+        prompt_and_rename_topic(store, ids);
+        return;
     }
+
+    let (parent_path, second_id) = ids.split_at(ids.len() - 1);
+    let second_id = second_id[0];
+
+    let (idea_text, is_direct_sub_topic, topic_name, idea_count, sub_topic_count) = {
+        let topic = match resolve_path(store, parent_path) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("Error: {}", e);
+                exit(1);
+            }
+        };
+        (
+            topic.ideas.iter().find(|i| i.id == second_id).map(|i| i.text.clone()),
+            topic.sub_topics.iter().any(|t| t.id == second_id),
+            topic.name.clone(),
+            topic.ideas.len(),
+            topic.sub_topics.len(),
+        )
+    };
+
+    if let Some(current_text) = idea_text {
+        let new_text = match prompt_edit("Idea: ", &current_text) {
+            Some(text) if !text.trim().is_empty() => text,
+            _ => {
+                println!("Aborted. Nothing was changed.");
+                exit(0);
+            }
+        };
+
+        let topic = resolve_path_mut(store, parent_path).expect("topic vanished mid-edit");
+        match edit_idea_in(topic, second_id, &new_text) {
+            Ok((topic_name, old_text)) => println!(
+                "Edited idea [{}] in topic \"{}\": \"{}\" -> \"{}\".",
+                second_id, topic_name, old_text, new_text
+            ),
+            Err(e) => {
+                println!("Error: {}", e);
+                exit(1);
+            }
+        }
+        return;
+    }
+
+    if !is_direct_sub_topic {
+        println!(
+            "Error: No idea and no sub-topic found with id {} in topic '{}' ({} idea(s), {} sub-topic(s)).",
+            second_id, topic_name, idea_count, sub_topic_count
+        );
+        exit(1);
+    }
+
+    prompt_and_rename_topic(store, ids);
 }
 
-// Renumbers every topic id (globally unique across the whole tree, pre-order: a topic before
-// its sub-topics, siblings in their current id order) and every idea id (within its own topic)
-// to 1, 2, 3, ..., closing any gaps left by deletions.
+// Renumbers every topic id and every idea id back to 1, 2, 3, ..., closing any gaps left by
+// deletions. Each level is renumbered independently - a topic's direct sub-topics get their own
+// 1, 2, 3, ... and so does every topic's own ideas - since ids are only ever unique among their
+// own siblings (see the Ids section of the help text). Order (by current id) is preserved at
+// every level.
 fn defrag(store: &mut Store) {
-    let mut next_id = 1u64;
-    defrag_topics(store, &mut next_id);
+    defrag_topics(store);
 }
 
-fn defrag_topics(topics: &mut Vec<Topic>, next_id: &mut u64) {
+fn defrag_topics(topics: &mut Vec<Topic>) {
     topics.sort_by_key(|t| t.id);
-    for topic in topics.iter_mut() {
-        topic.id = *next_id;
-        *next_id += 1;
+    for (index, topic) in topics.iter_mut().enumerate() {
+        topic.id = (index + 1) as u64;
         topic.ideas.sort_by_key(|i| i.id);
         for (idea_index, idea) in topic.ideas.iter_mut().enumerate() {
             idea.id = (idea_index + 1) as u64;
         }
-        defrag_topics(&mut topic.sub_topics, next_id);
+        defrag_topics(&mut topic.sub_topics);
     }
+}
+
+fn parse_id(s: &str) -> Result<u64, String> {
+    match s.parse::<u64>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("id must be a positive integer (got '{}').", s)),
+    }
+}
+
+fn parse_id_path_or_exit(strs: &[String]) -> Vec<u64> {
+    strs.iter()
+        .map(|s| match parse_id(s) {
+            Ok(n) => n,
+            Err(e) => {
+                println!("Error: {}", e);
+                exit(1);
+            }
+        })
+        .collect()
 }
 
 fn main() {
@@ -717,23 +782,15 @@ fn main() {
     }
 
     if arguments[1] == "edit" {
-        match arguments.len() {
-            3 => {
-                run_edit_topic(&mut store, &arguments[2]);
-                save_store(&path, &store);
-                exit(0);
-            }
-            4 => {
-                run_edit(&mut store, &arguments[2], &arguments[3]);
-                save_store(&path, &store);
-                exit(0);
-            }
-            _ => {
-                println!("Error: Invalid usage of edit.");
-                print_help();
-                exit(1);
-            }
+        if arguments.len() < 3 {
+            println!("Error: Invalid usage of edit.");
+            print_help();
+            exit(1);
         }
+        let ids = parse_id_path_or_exit(&arguments[2..]);
+        run_edit(&mut store, &ids);
+        save_store(&path, &store);
+        exit(0);
     }
 
     if arguments[1] == "add-topic" {
@@ -749,23 +806,15 @@ fn main() {
     }
 
     if arguments[1] == "delete" {
-        match arguments.len() {
-            3 => {
-                run_delete_topic(&mut store, &arguments[2]);
-                save_store(&path, &store);
-                exit(0);
-            }
-            4 => {
-                run_delete(&mut store, &arguments[2], &arguments[3]);
-                save_store(&path, &store);
-                exit(0);
-            }
-            _ => {
-                println!("Error: Invalid usage of delete.");
-                print_help();
-                exit(1);
-            }
+        if arguments.len() < 3 {
+            println!("Error: Invalid usage of delete.");
+            print_help();
+            exit(1);
         }
+        let ids = parse_id_path_or_exit(&arguments[2..]);
+        run_delete(&mut store, &ids);
+        save_store(&path, &store);
+        exit(0);
     }
 
     if arguments.len() == 2 && arguments[1] == "defrag" {
