@@ -80,6 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.IDEA_AUR_PUSH_TOKEN }}
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/idea-aur"
           git config user.name "idea-release-bot"
           git config user.email "actions@users.noreply.github.com"
           BRANCH="bump-${{ steps.ver.outputs.pkgver }}"
