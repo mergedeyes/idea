@@ -1,0 +1,93 @@
+name: Test & propose AUR bump
+
+# Runs on every idea GitHub release. Does the boring, error-prone parts
+# (bump version, recompute checksums, rebuild, regen .SRCINFO) AND actually
+# tests the result (real build + namcap + REUSE check) in a clean Arch
+# container. Opens a PR on idea-aur instead of pushing straight to AUR --
+# the actual AUR push is a separate, human-triggered step (publish-aur.yml
+# in idea-aur), so this workflow never holds AUR push credentials at all.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      pkgver:
+        description: "Version to bump idea-aur to (defaults to this release's tag)"
+        required: false
+
+jobs:
+  bump-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git openssh pacman-contrib namcap devtools sudo
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Checkout idea-aur
+        uses: actions/checkout@v4
+        with:
+          repository: mergedeyes/idea-aur
+          token: ${{ secrets.IDEA_AUR_PUSH_TOKEN }}
+          path: idea-aur
+          ref: main
+
+      - name: Determine version
+        id: ver
+        run: |
+          RAW="${{ github.event.inputs.pkgver || github.event.release.tag_name }}"
+          echo "pkgver=${RAW#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Fix workspace ownership
+        run: chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Bump pkgver, reset pkgrel
+        working-directory: idea-aur
+        run: |
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.ver.outputs.pkgver }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+
+      - name: Update checksums
+        working-directory: idea-aur
+        run: sudo -u builder updpkgsums
+
+      - name: Build package
+        working-directory: idea-aur
+        run: sudo -u builder makepkg --syncdeps --noconfirm --clean
+
+      - name: Regenerate .SRCINFO
+        working-directory: idea-aur
+        run: sudo -u builder makepkg --printsrcinfo > .SRCINFO
+
+      - name: namcap - PKGBUILD
+        working-directory: idea-aur
+        run: namcap PKGBUILD
+
+      - name: namcap - built package
+        working-directory: idea-aur
+        run: namcap idea-*-x86_64.pkg.tar.zst
+
+      - name: REUSE / license compliance
+        working-directory: idea-aur
+        run: pkgctl license check
+
+      - name: Commit and open PR
+        working-directory: idea-aur
+        env:
+          GH_TOKEN: ${{ secrets.IDEA_AUR_PUSH_TOKEN }}
+        run: |
+          git config user.name "idea-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          BRANCH="bump-${{ steps.ver.outputs.pkgver }}"
+          git checkout -b "$BRANCH"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Bump to ${{ steps.ver.outputs.pkgver }}"
+          git push origin "$BRANCH"
+          gh pr create --repo mergedeyes/idea-aur \
+            --base main --head "$BRANCH" \
+            --title "Bump to ${{ steps.ver.outputs.pkgver }}" \
+            --body "Automated bump for the ${{ steps.ver.outputs.pkgver }} release. Build, namcap (PKGBUILD + built package), and REUSE compliance all passed in this run. Merging this triggers the publish-to-AUR workflow."
