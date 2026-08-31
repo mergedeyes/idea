@@ -24,7 +24,7 @@ jobs:
     steps:
       - name: Install build tools
         run: |
-          pacman -Syu --noconfirm --needed base-devel git openssh pacman-contrib namcap devtools sudo
+          pacman -Syu --noconfirm --needed base-devel git openssh pacman-contrib namcap devtools sudo github-cli
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
@@ -87,7 +87,7 @@ jobs:
           git checkout -b "$BRANCH"
           git add PKGBUILD .SRCINFO
           git commit -m "Bump to ${{ steps.ver.outputs.pkgver }}"
-          git push origin "$BRANCH"
+          git push --force origin "$BRANCH"
           gh pr create --repo mergedeyes/idea-aur \
             --base main --head "$BRANCH" \
             --title "Bump to ${{ steps.ver.outputs.pkgver }}" \
