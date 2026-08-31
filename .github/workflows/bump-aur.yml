@@ -51,6 +51,10 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=${{ steps.ver.outputs.pkgver }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 
+      - name: REUSE / license compliance
+        working-directory: idea-aur
+        run: pkgctl license check
+
       - name: Update checksums
         working-directory: idea-aur
         run: sudo -u builder updpkgsums
@@ -70,10 +74,6 @@ jobs:
       - name: namcap - built package
         working-directory: idea-aur
         run: namcap idea-*-x86_64.pkg.tar.zst
-
-      - name: REUSE / license compliance
-        working-directory: idea-aur
-        run: pkgctl license check
 
       - name: Commit and open PR
         working-directory: idea-aur
